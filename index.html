@@ -1101,7 +1101,10 @@
 
                 while (true) {
                     const { done, value } = await reader.read();
-                    if (done) break;
+                    if (done) {
+                        console.log('[SSE] Stream ended, finalOutput length:', finalOutput.length, 'liveContent length:', liveResultContent.length);
+                        break;
+                    }
 
                     buffer += decoder.decode(value, { stream: true });
                     const lines = buffer.split('\n');
@@ -1112,21 +1115,21 @@
                         try {
                             const data = JSON.parse(line.slice(6));
                             const evt = data.event;
+                            if (evt !== 'ping') console.log('[SSE]', evt, 'nodeId:', data.data?.node_id, 'title:', (data.data?.title || '').substring(0, 30));
 
                             // Progress tracking
-                            if (evt === 'node_started' || evt === 'node_finished') {
+                            if (evt === 'node_started' || evt === 'node_finished' || evt === 'iteration_started' || evt === 'iteration_next' || evt === 'iteration_completed') {
                                 const nodeId = data.data?.node_id;
                                 const nodeTitle = data.data?.title || '';
-                                const isFinished = evt === 'node_finished';
+                                const isFinished = evt === 'node_finished' || evt === 'iteration_completed';
 
                                 if (nodeId === 'start') {
                                     if (isFinished) markStepComplete('start');
-                                } else if (nodeId === 'plan_queries') {
+                                } else if (nodeId === 'plan_queries' || nodeId === 'build_search_jobs') {
                                     if (isFinished) markStepComplete('plan');
-                                } else if (nodeId === 'iter_retrieve') {
-                                    if (isFinished) markStepComplete('retrieve');
-                                } else if (nodeTitle.includes('综述') || nodeTitle.includes('报告') || nodeTitle.includes('synthesize') || nodeId?.startsWith('178')) {
-                                    // end node or synthesis node
+                                } else if (nodeId === 'iter_retrieve' || nodeId === 'iter_http_get' || nodeId === 'parse_search_result' || nodeId === 'merge_rank' || nodeId === 'expert_screen' || nodeId === 'search_gap_analyzer' || evt === 'iteration_started' || evt === 'iteration_next') {
+                                    if (isFinished || evt === 'iteration_started' || evt === 'iteration_next') markStepComplete('retrieve');
+                                } else if (nodeTitle.includes('综述') || nodeTitle.includes('报告') || nodeTitle.includes('synthesize') || nodeId?.startsWith('178') || nodeId === 'final_report') {
                                     if (isFinished) markStepComplete('synthesize');
                                 }
                             }
@@ -1143,6 +1146,7 @@
 
                             // Workflow finished
                             if (evt === 'workflow_finished') {
+                                console.log('[SSE] ✅ workflow_finished, outputs:', Object.keys(data.data?.outputs || {}));
                                 // Mark all steps complete
                                 markStepComplete('synthesize');
 
@@ -1167,13 +1171,20 @@
                     }
                 }
 
+                // Fallback: if no finalOutput but we have live stream content, use it
+                if (!finalOutput && liveResultContent) {
+                    console.log('[SSE] Using liveContent as fallback');
+                    finalOutput = liveResultContent;
+                    workflowStatus = workflowStatus || 'succeeded';
+                }
+
                 // Save to history
                 const historyItem = {
                     topic: inputs.research_topic,
                     taskType: inputs.task_type,
                     timestamp: Date.now(),
                     result: finalOutput,
-                    status: workflowStatus,
+                    status: workflowStatus || (finalOutput ? 'succeeded' : 'unknown'),
                     error: workflowError,
                 };
                 searchHistory.push(historyItem);
