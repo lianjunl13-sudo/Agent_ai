@@ -1,6 +1,6 @@
-# Agent AI
+# Agent AI 学术论文检索助手
 
-一个通过服务端代理调用 Dify Workflow API 的轻量网页应用。当前页面匹配该 Dify App 的研究调研表单字段。
+一个通过服务端代理调用 Dify Workflow API 的学术论文检索网页应用。前端负责表单、历史记录、Markdown 展示；Dify API Key 只放在服务器 `.env`，不会暴露到浏览器。
 
 ## 本地运行
 
@@ -22,11 +22,11 @@ PORT=3000
 
 ## 部署
 
-服务器安装 Node.js 18+ 后：
+服务器需要 Node.js 18+：
 
 ```bash
 npm install --omit=dev
 npm start
 ```
 
-建议用 PM2 托管进程，并用 Nginx 反向代理到应用端口。
+生产环境建议用 PM2 托管进程，并用 Nginx 反向代理到应用端口。
