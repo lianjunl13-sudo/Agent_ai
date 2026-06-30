@@ -832,9 +832,8 @@
                                     <span>{x}</span> preferred_sources <span class="required">必填</span>
                                 </label>
                                 <select class="form-select" name="preferred_sources" required>
+                                    <option value="arXiv only">arXiv only（推荐）</option>
                                     <option value="arXiv + Semantic Scholar">arXiv + Semantic Scholar</option>
-                                    <option value="arXiv only">arXiv only</option>
-                                    <option value="Semantic Scholar only">Semantic Scholar only</option>
                                 </select>
                             </div>
                             <div class="form-group">
@@ -1293,7 +1292,8 @@
                     const canRetry = retryCount < MAX_RETRIES;
 
                     if (isTimeout && canRetry && lastInputs) {
-                        if (retryCount >= 2 && lastInputs.preferred_sources !== 'arXiv only') {
+                        // Immediately switch to arXiv only on any timeout
+                        if (lastInputs.preferred_sources !== 'arXiv only') {
                             lastInputs.preferred_sources = 'arXiv only';
                         }
                         const delay = retryCount * 2000;
@@ -1412,9 +1412,9 @@
                 if (error.name !== 'AbortError') {
                     const errMsg = error.message || '';
                     const canRetry = retryCount < MAX_RETRIES;
-                    // Auto retry again
+                    // Auto retry again, immediately switch to arXiv only
                     if (canRetry && lastInputs) {
-                        if (retryCount >= 2 && lastInputs.preferred_sources !== 'arXiv only') {
+                        if (lastInputs.preferred_sources !== 'arXiv only') {
                             lastInputs.preferred_sources = 'arXiv only';
                         }
                         const delay = retryCount * 2000;
@@ -1507,7 +1507,7 @@
                 research_topic: item.topic,
                 task_type: item.taskType,
                 max_results: 5,
-                preferred_sources: 'arXiv + Semantic Scholar',
+                preferred_sources: 'arXiv only',
                 output_language: '中文',
             }, item.status, item.error);
             closeSidebar();
