@@ -741,11 +741,32 @@
                 <span id="themeIcon">☀️</span>
                 <span id="themeLabel">浅色模式</span>
             </button>
+            <button class="theme-toggle" onclick="openApiKeyModal()" style="margin-top:4px;">
+                <span>🔑</span>
+                <span>API Key</span>
+            </button>
         </div>
     </aside>
 
+    <!-- API Key Modal -->
+    <div id="apiKeyModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:none;align-items:center;justify-content:center;">
+        <div style="background:var(--bg-card);border-radius:var(--radius-lg);padding:24px;max-width:460px;width:90%;box-shadow:var(--shadow-lg);">
+            <h3 style="margin:0 0 8px 0;color:var(--text-primary);">🔑 设置 Dify API Key</h3>
+            <p style="color:var(--text-secondary);font-size:13px;margin:0 0 16px 0;">API Key 仅保存在你的浏览器本地，不会上传到任何服务器。</p>
+            <input id="apiKeyInput" type="password" placeholder="app-xxxxxxxxxxxx" style="width:100%;padding:10px 14px;border:1px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-tertiary);color:var(--text-primary);font-size:14px;box-sizing:border-box;" value="">
+            <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end;">
+                <button onclick="closeApiKeyModal()" style="padding:8px 16px;background:var(--bg-tertiary);color:var(--text-secondary);border:1px solid var(--border-color);border-radius:var(--radius-sm);cursor:pointer;">取消</button>
+                <button onclick="saveApiKeyAndClose()" style="padding:8px 16px;background:var(--accent-color);color:#fff;border:none;border-radius:var(--radius-sm);cursor:pointer;">保存</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Main -->
     <main class="main">
+        <!-- API Key Warning -->
+        <div id="apiKeyWarning" style="display:none;background:rgba(239,68,68,0.08);border-bottom:1px solid rgba(239,68,68,0.2);padding:10px 16px;text-align:center;font-size:13px;color:var(--error-color);">
+            ⚠️ 请先设置 Dify API Key 才能使用检索功能。<button onclick="openApiKeyModal()" style="background:var(--accent-color);color:#fff;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;margin-left:8px;font-size:12px;">设置</button>
+        </div>
         <header class="chat-header">
             <button class="sidebar-toggle" onclick="toggleSidebar()">☰</button>
             <span class="chat-header-title" id="pageTitle">论文检索</span>
@@ -910,8 +931,15 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script>
-        const API_KEY = 'app-b1Fcn7EkUXJH6JaJPwDjFzsI';
         const API_BASE = 'https://api.dify.ai/v1';
+
+        // API Key from localStorage
+        function getApiKey() {
+            return localStorage.getItem('dify_api_key') || '';
+        }
+        function setApiKey(key) {
+            localStorage.setItem('dify_api_key', key.trim());
+        }
 
         let searchHistory = [];
         let abortController = null;
@@ -923,17 +951,54 @@
         marked.setOptions({ breaks: true, gfm: true });
 
         const renderer = new marked.Renderer();
-        renderer.code = function({ text, lang }) {
+        renderer.code = function({ text: codeText, lang }) {
+            const safeText = codeText || '';
             const validLang = lang && hljs.getLanguage(lang) ? lang : 'plaintext';
-            const highlighted = hljs.highlight(text, { language: validLang }).value;
+            const highlighted = hljs.highlight(safeText, { language: validLang }).value;
             return `<pre><div class="copy-btn" onclick="copyCode(this)">复制</div><code class="hljs language-${validLang}">${highlighted}</code></pre>`;
         };
         marked.use({ renderer });
+
+        function safeMarkdown(text) {
+            if (text == null || typeof text !== 'string') return '';
+            try { return marked.parse(text); } catch(e) { return `<p style="color:var(--error-color);">渲染失败: ${escapeHtml(e.message)}</p>`; }
+        }
 
         function init() {
             loadHistory();
             renderHistory();
             updateThemeUI();
+            checkApiKey();
+            // Pre-fill API key input
+            document.getElementById('apiKeyInput').value = getApiKey();
+        }
+
+        function checkApiKey() {
+            const hasKey = !!getApiKey();
+            document.getElementById('apiKeyWarning').style.display = hasKey ? 'none' : 'block';
+            document.getElementById('submitBtn').disabled = !hasKey;
+            if (!hasKey) {
+                document.getElementById('submitBtn').innerHTML = '<span>请先设置 API Key</span>';
+            } else {
+                document.getElementById('submitBtn').innerHTML = '<span>开始检索</span>';
+            }
+        }
+
+        function openApiKeyModal() {
+            document.getElementById('apiKeyInput').value = getApiKey();
+            document.getElementById('apiKeyModal').style.display = 'flex';
+            document.getElementById('apiKeyInput').focus();
+        }
+
+        function closeApiKeyModal() {
+            document.getElementById('apiKeyModal').style.display = 'none';
+        }
+
+        function saveApiKeyAndClose() {
+            const key = document.getElementById('apiKeyInput').value.trim();
+            if (key) setApiKey(key);
+            closeApiKeyModal();
+            checkApiKey();
         }
 
         function loadHistory() {
@@ -1030,11 +1095,6 @@
             `;
         }
 
-        function safeMarkdown(text) {
-            if (text == null || typeof text !== 'string' || text === '') return '';
-            try { return marked.parse(text); } catch(e) { return `<p style="color:var(--error-color);">渲染失败: ${escapeHtml(e.message)}</p>`; }
-        }
-
         function updateLiveContent(text) {
             const el = document.getElementById('liveContent');
             if (el && text != null && text !== '') {
@@ -1046,6 +1106,7 @@
 
         async function submitSearch(e) {
             e.preventDefault();
+            if (!getApiKey()) { openApiKeyModal(); return; }
             const form = e.target;
             const formData = new FormData(form);
 
@@ -1103,7 +1164,7 @@
                     await new Promise(r => setTimeout(r, POLL_INTERVAL));
                     try {
                         const pollResp = await fetch(`${API_BASE}/workflows/run/${runId}`, {
-                            headers: { 'Authorization': `Bearer ${API_KEY}` }
+                            headers: { 'Authorization': `Bearer ${getApiKey()}` }
                         });
                         if (!pollResp.ok) continue;
                         const pollData = await pollResp.json();
@@ -1129,7 +1190,7 @@
                 const response = await fetch(`${API_BASE}/workflows/run`, {
                     method: 'POST',
                     headers: {
-                        'Authorization': `Bearer ${API_KEY}`,
+                        'Authorization': `Bearer ${getApiKey()}`,
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
@@ -1264,7 +1325,7 @@
                                 await new Promise(r => setTimeout(r, POLL_INTERVAL));
                                 try {
                                     const pollResp = await fetch(`${API_BASE}/workflows/run/${workflowRunId}`, {
-                                        headers: { 'Authorization': `Bearer ${API_KEY}` }
+                                        headers: { 'Authorization': `Bearer ${getApiKey()}` }
                                     });
                                     if (!pollResp.ok) continue;
                                     const pollData = await pollResp.json();
@@ -1379,7 +1440,7 @@
             try {
                 const response = await fetch(`${API_BASE}/workflows/run`, {
                     method: 'POST',
-                    headers: { 'Authorization': `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+                    headers: { 'Authorization': `Bearer ${getApiKey()}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ inputs: lastInputs, response_mode: 'streaming', user: getUserId() }),
                     signal: abortController.signal,
                 });
