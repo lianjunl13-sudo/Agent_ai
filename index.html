@@ -1029,8 +1029,8 @@
 
         function updateLiveContent(text) {
             const el = document.getElementById('liveContent');
-            if (el) {
-                el.innerHTML = marked.parse(text);
+            if (el && text != null && text !== '') {
+                el.innerHTML = marked.parse(String(text));
                 hljs.highlightAll();
                 document.getElementById('contentArea').scrollTop = document.getElementById('contentArea').scrollHeight;
             }
@@ -1179,15 +1179,26 @@
             } catch (error) {
                 if (error.name !== 'AbortError') {
                     showView('resultsView');
+                    const errMsg = error.message || '';
+                    const isSemanticScholar = errMsg.includes('semanticscholar') || errMsg.includes('max retries');
                     document.getElementById('resultsContainer').innerHTML = `
                         <div class="result-card">
                             <div class="result-header">
                                 <div class="result-icon">⚠️</div>
-                                <div><div class="result-title">请求失败</div></div>
+                                <div><div class="result-title">${isSemanticScholar ? 'Semantic Scholar 暂时不可用' : '请求失败'}</div></div>
                             </div>
                             <div class="result-content">
-                                <p style="color:var(--error-color);">${escapeHtml(error.message)}</p>
-                                <p style="color:var(--text-tertiary);">请检查网络连接或稍后重试</p>
+                                <p style="color:var(--error-color);">${escapeHtml(errMsg)}</p>
+                                ${isSemanticScholar ? `
+                                <div style="background:var(--accent-bg);border-radius:8px;padding:12px;margin-top:12px;">
+                                    <p style="color:var(--accent-color);font-weight:500;margin-bottom:8px;">💡 建议：</p>
+                                    <ul style="margin:0;padding-left:18px;color:var(--text-secondary);font-size:13px;line-height:1.8;">
+                                        <li>将<strong>偏好数据源</strong>改为 <strong>arXiv only</strong> 重试</li>
+                                        <li>Semantic Scholar 对免费 API 有频率限制，高峰期容易超时</li>
+                                        <li>稍等 1-2 分钟后重试</li>
+                                    </ul>
+                                </div>
+                                ` : `<p style="color:var(--text-tertiary);">请检查网络连接或稍后重试</p>`}
                             </div>
                         </div>
                     `;
