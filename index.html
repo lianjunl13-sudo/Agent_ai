@@ -1074,6 +1074,52 @@
             let workflowStatus = '';
             let workflowError = '';
             let hasLiveView = false;
+            let workflowRunId = null;
+            let gotWorkflowFinished = false;
+
+            // Helper: parse output from Dify response data
+            const parseOutput = (wsData) => {
+                const outs = wsData?.outputs || {};
+                if (outs.markdown_result) return outs.markdown_result;
+                if (outs.text) return outs.text;
+                if (outs.answer) return outs.answer;
+                if (outs.result) return outs.result;
+                if (typeof outs === 'string') return outs;
+                const keys = Object.keys(outs);
+                return keys.length >= 1 ? outs[keys[0]] : '';
+            };
+
+            // Helper: poll for workflow result
+            const pollForResult = async (runId, startTime) => {
+                const MAX_WAIT = 300000; // 5 min total
+                const POLL_INTERVAL = 5000;
+                document.getElementById('progressHint').textContent = '⏳ 连接断开，正在轮询等待结果...';
+
+                while (Date.now() - startTime < MAX_WAIT) {
+                    await new Promise(r => setTimeout(r, POLL_INTERVAL));
+                    try {
+                        const pollResp = await fetch(`${API_BASE}/workflows/run/${runId}`, {
+                            headers: { 'Authorization': `Bearer ${API_KEY}` }
+                        });
+                        if (!pollResp.ok) continue;
+                        const pollData = await pollResp.json();
+                        const pollStatus = pollData?.status;
+                        document.getElementById('progressHint').textContent =
+                            `⏳ 工作流状态: ${pollStatus || '运行中'} (已等 ${Math.round((Date.now()-startTime)/1000)}s)`;
+
+                        if (pollStatus === 'succeeded' || pollStatus === 'failed') {
+                            markStepComplete('synthesize');
+                            workflowStatus = pollStatus;
+                            workflowError = pollData?.error || '';
+                            finalOutput = parseOutput(pollData);
+                            if (!finalOutput && liveResultContent) finalOutput = liveResultContent;
+                            gotWorkflowFinished = true;
+                            return;
+                        }
+                    } catch (e) { /* continue polling */ }
+                }
+                document.getElementById('progressHint').textContent = '⚠️ 等待超时';
+            };
 
             try {
                 const response = await fetch(`${API_BASE}/workflows/run`, {
@@ -1102,7 +1148,7 @@
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) {
-                        console.log('[SSE] Stream ended, finalOutput length:', finalOutput.length, 'liveContent length:', liveResultContent.length);
+                        console.log('[SSE] Stream ended');
                         break;
                     }
 
@@ -1115,7 +1161,11 @@
                         try {
                             const data = JSON.parse(line.slice(6));
                             const evt = data.event;
-                            if (evt !== 'ping') console.log('[SSE]', evt, 'nodeId:', data.data?.node_id, 'title:', (data.data?.title || '').substring(0, 30));
+
+                            // Capture workflow run ID
+                            if (evt === 'workflow_started') {
+                                workflowRunId = data.workflow_run_id || data.data?.id;
+                            }
 
                             // Progress tracking
                             if (evt === 'node_started' || evt === 'node_finished' || evt === 'iteration_started' || evt === 'iteration_next' || evt === 'iteration_completed') {
@@ -1123,13 +1173,11 @@
                                 const nodeTitle = data.data?.title || '';
                                 const isFinished = evt === 'node_finished' || evt === 'iteration_completed';
 
-                                if (nodeId === 'start') {
-                                    if (isFinished) markStepComplete('start');
-                                } else if (nodeId === 'plan_queries' || nodeId === 'build_search_jobs') {
-                                    if (isFinished) markStepComplete('plan');
-                                } else if (nodeId === 'iter_retrieve' || nodeId === 'iter_http_get' || nodeId === 'parse_search_result' || nodeId === 'merge_rank' || nodeId === 'expert_screen' || nodeId === 'search_gap_analyzer' || evt === 'iteration_started' || evt === 'iteration_next') {
+                                if (nodeId === 'start') { if (isFinished) markStepComplete('start'); }
+                                else if (nodeId === 'plan_queries' || nodeId === 'build_search_jobs') { if (isFinished) markStepComplete('plan'); }
+                                else if (nodeId === 'iter_retrieve' || nodeId === 'iter_http_get' || nodeId === 'parse_search_result' || nodeId === 'merge_rank' || nodeId === 'expert_screen' || evt === 'iteration_started' || evt === 'iteration_next') {
                                     if (isFinished || evt === 'iteration_started' || evt === 'iteration_next') markStepComplete('retrieve');
-                                } else if (nodeTitle.includes('综述') || nodeTitle.includes('报告') || nodeTitle.includes('synthesize') || nodeId?.startsWith('178') || nodeId === 'final_report') {
+                                } else if (nodeId === 'synthesize' || nodeTitle.includes('综述') || nodeTitle.includes('报告') || nodeId?.startsWith('178') || nodeId === 'final_report') {
                                     if (isFinished) markStepComplete('synthesize');
                                 }
                             }
@@ -1137,43 +1185,33 @@
                             // Streaming text chunks
                             if (evt === 'text_chunk') {
                                 liveResultContent += (data.data?.text || '');
-                                if (!hasLiveView) {
-                                    showLiveResult();
-                                    hasLiveView = true;
-                                }
+                                if (!hasLiveView) { showLiveResult(); hasLiveView = true; }
                                 updateLiveContent(liveResultContent);
                             }
 
                             // Workflow finished
                             if (evt === 'workflow_finished') {
-                                console.log('[SSE] ✅ workflow_finished, outputs:', Object.keys(data.data?.outputs || {}));
-                                // Mark all steps complete
+                                console.log('[SSE] ✅ workflow_finished');
                                 markStepComplete('synthesize');
-
+                                gotWorkflowFinished = true;
                                 workflowStatus = data.data?.status || (data.data?.error ? 'failed' : 'succeeded');
                                 workflowError = data.data?.error || '';
-
-                                // Try multiple output field names
-                                const outs = data.data?.outputs || {};
-                                if (outs.markdown_result) finalOutput = outs.markdown_result;
-                                else if (outs.text) finalOutput = outs.text;
-                                else if (outs.answer) finalOutput = outs.answer;
-                                else if (outs.result) finalOutput = outs.result;
-                                else if (typeof outs === 'string') finalOutput = outs;
-                                else {
-                                    const keys = Object.keys(outs);
-                                    if (keys.length === 1) finalOutput = outs[keys[0]];
-                                    else if (keys.length > 1) finalOutput = liveResultContent;
-                                    else finalOutput = liveResultContent;
-                                }
+                                finalOutput = parseOutput(data.data);
+                                if (!finalOutput && liveResultContent) finalOutput = liveResultContent;
                             }
                         } catch (e) {}
                     }
                 }
 
-                // Fallback: if no finalOutput but we have live stream content, use it
+                // ===== FALLBACK: If stream ended without workflow_finished, poll for result =====
+                if (!gotWorkflowFinished && workflowRunId) {
+                    console.log('[SSE] Stream ended prematurely, polling for result...');
+                    const startTime = Date.now();
+                    await pollForResult(workflowRunId, startTime);
+                }
+
+                // Use liveContent as last resort
                 if (!finalOutput && liveResultContent) {
-                    console.log('[SSE] Using liveContent as fallback');
                     finalOutput = liveResultContent;
                     workflowStatus = workflowStatus || 'succeeded';
                 }
@@ -1196,15 +1234,65 @@
 
             } catch (error) {
                 if (error.name !== 'AbortError') {
+                    // If stream broke but we have workflowRunId, try polling
+                    if (workflowRunId && !gotWorkflowFinished) {
+                        console.log('[SSE] Stream broke, trying polling fallback...');
+                        document.getElementById('progressHint').textContent = '⏳ 连接中断，正在轮询恢复...';
+                        try {
+                            const startTime = Date.now();
+                            // pollForResult is defined inside try scope above, inline a simplified version
+                            const MAX_WAIT = 300000;
+                            const POLL_INTERVAL = 5000;
+                            while (Date.now() - startTime < MAX_WAIT) {
+                                await new Promise(r => setTimeout(r, POLL_INTERVAL));
+                                try {
+                                    const pollResp = await fetch(`${API_BASE}/workflows/run/${workflowRunId}`, {
+                                        headers: { 'Authorization': `Bearer ${API_KEY}` }
+                                    });
+                                    if (!pollResp.ok) continue;
+                                    const pollData = await pollResp.json();
+                                    const pollStatus = pollData?.status;
+                                    document.getElementById('progressHint').textContent =
+                                        `⏳ 状态: ${pollStatus || '运行中'} (${Math.round((Date.now()-startTime)/1000)}s)`;
+                                    if (pollStatus === 'succeeded' || pollStatus === 'failed') {
+                                        markStepComplete('synthesize');
+                                        workflowStatus = pollStatus;
+                                        workflowError = pollData?.error || '';
+                                        finalOutput = (() => {
+                                            const outs = pollData?.outputs || {};
+                                            return outs.markdown_result || outs.text || outs.answer || outs.result || liveResultContent;
+                                        })();
+                                        gotWorkflowFinished = true;
+                                        break;
+                                    }
+                                } catch (e) { /* retry */ }
+                            }
+                            // Show polled result
+                            if (gotWorkflowFinished) {
+                                if (!finalOutput && liveResultContent) finalOutput = liveResultContent;
+                                const historyItem = {
+                                    topic: lastInputs.research_topic, taskType: lastInputs.task_type,
+                                    timestamp: Date.now(), result: finalOutput,
+                                    status: workflowStatus || (finalOutput ? 'succeeded' : 'unknown'), error: workflowError
+                                };
+                                searchHistory.push(historyItem);
+                                saveHistory(); renderHistory();
+                                showResults(finalOutput, lastInputs, workflowStatus, workflowError);
+                                btn.disabled = false;
+                                btn.innerHTML = '<span>开始检索</span>';
+                                abortController = null;
+                                return;
+                            }
+                        } catch (e) { /* polling failed, fall through to error display */ }
+                    }
+
                     retryCount++;
                     const errMsg = error.message || '';
-                    const isTimeout = errMsg.includes('504') || errMsg.includes('timeout') || errMsg.includes('Gateway');
+                    const isTimeout = errMsg.includes('504') || errMsg.includes('timeout') || errMsg.includes('Gateway') || errMsg.includes('network');
                     const isSemanticScholar = errMsg.includes('semanticscholar') || errMsg.includes('max retries');
                     const canRetry = retryCount < MAX_RETRIES;
 
-                    // Auto-retry for timeout errors
                     if (isTimeout && canRetry && lastInputs) {
-                        // Auto fallback to arXiv only on retry
                         if (retryCount >= 2 && lastInputs.preferred_sources !== 'arXiv only') {
                             lastInputs.preferred_sources = 'arXiv only';
                         }
