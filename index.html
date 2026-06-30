@@ -896,6 +896,7 @@
                                 <span>生成综述报告</span>
                             </div>
                         </div>
+                        <p id="progressHint" style="text-align:center;color:var(--text-tertiary);font-size:12px;margin-top:12px;"></p>
                     </div>
                 </div>
             </div>
@@ -916,6 +917,9 @@
         let searchHistory = [];
         let abortController = null;
         let liveResultContent = '';
+        let retryCount = 0;
+        let lastInputs = null;
+        const MAX_RETRIES = 3;
 
         marked.setOptions({ breaks: true, gfm: true });
 
@@ -1053,6 +1057,9 @@
 
             if (!inputs.research_topic) return;
 
+            lastInputs = { ...inputs };
+            retryCount = 0;
+
             document.getElementById('pageTitle').textContent = inputs.research_topic;
             showView('progressView');
             resetProgress();
@@ -1178,27 +1185,53 @@
 
             } catch (error) {
                 if (error.name !== 'AbortError') {
-                    showView('resultsView');
+                    retryCount++;
                     const errMsg = error.message || '';
+                    const isTimeout = errMsg.includes('504') || errMsg.includes('timeout') || errMsg.includes('Gateway');
                     const isSemanticScholar = errMsg.includes('semanticscholar') || errMsg.includes('max retries');
+                    const canRetry = retryCount < MAX_RETRIES;
+
+                    // Auto-retry for timeout errors
+                    if (isTimeout && canRetry && lastInputs) {
+                        // Auto fallback to arXiv only on retry
+                        if (retryCount >= 2 && lastInputs.preferred_sources !== 'arXiv only') {
+                            lastInputs.preferred_sources = 'arXiv only';
+                        }
+                        const delay = retryCount * 2000;
+                        showView('progressView');
+                        resetProgress();
+                        document.getElementById('progressHint').textContent = `⏳ 第 ${retryCount} 次重试中... (${delay/1000}s 后自动重试)`;
+                        await new Promise(r => setTimeout(r, delay));
+                        await retrySearch();
+                        return;
+                    }
+
+                    showView('resultsView');
                     document.getElementById('resultsContainer').innerHTML = `
                         <div class="result-card">
                             <div class="result-header">
                                 <div class="result-icon">⚠️</div>
-                                <div><div class="result-title">${isSemanticScholar ? 'Semantic Scholar 暂时不可用' : '请求失败'}</div></div>
+                                <div><div class="result-title">${isSemanticScholar ? 'Semantic Scholar 暂时不可用' : isTimeout ? '请求超时' : '请求失败'}</div></div>
                             </div>
                             <div class="result-content">
                                 <p style="color:var(--error-color);">${escapeHtml(errMsg)}</p>
-                                ${isSemanticScholar ? `
+                                ${isSemanticScholar || isTimeout ? `
                                 <div style="background:var(--accent-bg);border-radius:8px;padding:12px;margin-top:12px;">
                                     <p style="color:var(--accent-color);font-weight:500;margin-bottom:8px;">💡 建议：</p>
                                     <ul style="margin:0;padding-left:18px;color:var(--text-secondary);font-size:13px;line-height:1.8;">
-                                        <li>将<strong>偏好数据源</strong>改为 <strong>arXiv only</strong> 重试</li>
-                                        <li>Semantic Scholar 对免费 API 有频率限制，高峰期容易超时</li>
-                                        <li>稍等 1-2 分钟后重试</li>
+                                        ${lastInputs && lastInputs.preferred_sources !== 'arXiv only' ? `<li>尝试改用 <strong>arXiv only</strong> 数据源</li>` : ''}
+                                        <li>Semantic Scholar 免费 API 有频率限制</li>
+                                        <li>Dify 工作流可能执行超时，请稍后重试</li>
                                     </ul>
                                 </div>
                                 ` : `<p style="color:var(--text-tertiary);">请检查网络连接或稍后重试</p>`}
+                                <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">
+                                    <button onclick="retrySearch()" style="padding:8px 20px;background:var(--accent-color);color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:13px;">🔄 手动重试</button>
+                                    ${lastInputs && lastInputs.preferred_sources !== 'arXiv only' ? `
+                                    <button onclick="retryWitharXiv()" style="padding:8px 20px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:8px;cursor:pointer;font-size:13px;">📄 改用 arXiv only 重试</button>
+                                    ` : ''}
+                                    <button onclick="newSearch()" style="padding:8px 20px;background:var(--bg-tertiary);color:var(--text-secondary);border:1px solid var(--border-color);border-radius:8px;cursor:pointer;font-size:13px;">↩ 返回首页</button>
+                                </div>
                             </div>
                         </div>
                     `;
@@ -1208,6 +1241,119 @@
                 btn.innerHTML = '<span>开始检索</span>';
                 abortController = null;
             }
+        }
+
+        async function retrySearch() {
+            if (!lastInputs) return;
+            retryCount++;
+            document.getElementById('pageTitle').textContent = lastInputs.research_topic;
+            showView('progressView');
+            resetProgress();
+            const btn = document.getElementById('submitBtn');
+            btn.disabled = true;
+            btn.innerHTML = `<div class="spinner"></div><span>重试中 (${retryCount}/${MAX_RETRIES})...</span>`;
+            abortController = new AbortController();
+            liveResultContent = '';
+            let finalOutput = '';
+            let workflowStatus = '';
+            let workflowError = '';
+            let hasLiveView = false;
+
+            try {
+                const response = await fetch(`${API_BASE}/workflows/run`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ inputs: lastInputs, response_mode: 'streaming', user: getUserId() }),
+                    signal: abortController.signal,
+                });
+
+                if (!response.ok) {
+                    const err = await response.json().catch(() => ({}));
+                    throw new Error(err.message || `请求失败 (${response.status})`);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            const evt = data.event;
+                            if (evt === 'text_chunk') {
+                                liveResultContent += (data.data?.text || '');
+                                if (!hasLiveView) { showLiveResult(); hasLiveView = true; }
+                                updateLiveContent(liveResultContent);
+                            }
+                            if (evt === 'workflow_finished') {
+                                workflowStatus = data.data?.status || (data.data?.error ? 'failed' : 'succeeded');
+                                workflowError = data.data?.error || '';
+                                const outs = data.data?.outputs || {};
+                                finalOutput = outs.markdown_result || outs.text || outs.answer || outs.result || liveResultContent;
+                            }
+                        } catch (e) {}
+                    }
+                }
+
+                const historyItem = { topic: lastInputs.research_topic, taskType: lastInputs.task_type, timestamp: Date.now(), result: finalOutput, status: workflowStatus, error: workflowError };
+                searchHistory.push(historyItem);
+                saveHistory();
+                renderHistory();
+                showResults(finalOutput, lastInputs, workflowStatus, workflowError);
+                retryCount = 0;
+
+            } catch (error) {
+                if (error.name !== 'AbortError') {
+                    const errMsg = error.message || '';
+                    const canRetry = retryCount < MAX_RETRIES;
+                    // Auto retry again
+                    if (canRetry && lastInputs) {
+                        if (retryCount >= 2 && lastInputs.preferred_sources !== 'arXiv only') {
+                            lastInputs.preferred_sources = 'arXiv only';
+                        }
+                        const delay = retryCount * 2000;
+                        document.getElementById('progressHint').textContent = `⏳ 第 ${retryCount} 次重试中... (${delay/1000}s 后自动重试)`;
+                        await new Promise(r => setTimeout(r, delay));
+                        await retrySearch();
+                        return;
+                    }
+                    showView('resultsView');
+                    document.getElementById('resultsContainer').innerHTML = `
+                        <div class="result-card">
+                            <div class="result-header">
+                                <div class="result-icon">⚠️</div>
+                                <div><div class="result-title">重试 ${retryCount} 次后仍失败</div></div>
+                            </div>
+                            <div class="result-content">
+                                <p style="color:var(--error-color);">${escapeHtml(errMsg)}</p>
+                                <p style="color:var(--text-tertiary);margin-top:8px;">已自动重试 ${retryCount} 次，请稍后再试或检查 Dify 工作流状态</p>
+                                <div style="display:flex;gap:8px;margin-top:16px;">
+                                    <button onclick="retrySearch()" style="padding:8px 20px;background:var(--accent-color);color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:13px;">🔄 再次重试</button>
+                                    <button onclick="newSearch()" style="padding:8px 20px;background:var(--bg-tertiary);color:var(--text-secondary);border:1px solid var(--border-color);border-radius:8px;cursor:pointer;font-size:13px;">↩ 返回首页</button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<span>开始检索</span>';
+                abortController = null;
+            }
+        }
+
+        function retryWitharXiv() {
+            if (lastInputs) {
+                lastInputs.preferred_sources = 'arXiv only';
+            }
+            retrySearch();
         }
 
         function showResults(content, inputs, status, errorMsg) {
