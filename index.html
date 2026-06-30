@@ -1030,10 +1030,15 @@
             `;
         }
 
+        function safeMarkdown(text) {
+            if (text == null || typeof text !== 'string' || text === '') return '';
+            try { return marked.parse(text); } catch(e) { return `<p style="color:var(--error-color);">渲染失败: ${escapeHtml(e.message)}</p>`; }
+        }
+
         function updateLiveContent(text) {
             const el = document.getElementById('liveContent');
             if (el && text != null && text !== '') {
-                el.innerHTML = marked.parse(String(text));
+                el.innerHTML = safeMarkdown(text);
                 hljs.highlightAll();
                 document.getElementById('contentArea').scrollTop = document.getElementById('contentArea').scrollHeight;
             }
@@ -1228,8 +1233,21 @@
                 saveHistory();
                 renderHistory();
 
-                // Show final results
-                showResults(finalOutput, inputs, workflowStatus, workflowError);
+                // Show final results (wrapped in try-catch for safety)
+                try {
+                    showResults(finalOutput, inputs, workflowStatus, workflowError);
+                } catch (e) {
+                    console.error('[SSE] showResults failed:', e);
+                    document.getElementById('resultsContainer').innerHTML = `
+                        <div class="result-card">
+                            <div class="result-header"><div class="result-icon">⚠️</div><div><div class="result-title">结果渲染失败</div></div></div>
+                            <div class="result-content">
+                                <p style="color:var(--error-color);">${escapeHtml(e.message)}</p>
+                                <p style="color:var(--text-tertiary);">原始内容长度: ${(finalOutput||'').length} 字符</p>
+                                <button onclick="retrySearch()" style="padding:8px 20px;background:var(--accent-color);color:#fff;border:none;border-radius:8px;cursor:pointer;margin-top:12px;">🔄 重试</button>
+                            </div>
+                        </div>`;
+                }
 
             } catch (error) {
                 if (error.name !== 'AbortError') {
@@ -1492,7 +1510,7 @@
                     </div>
                     ${metaInfo}
                     ${errorBlock}
-                    <div class="result-content">${content ? marked.parse(content) : '<p style="color:var(--text-tertiary);">暂无输出内容 — 检索源可能暂时不可用</p>'}</div>
+                    <div class="result-content">${(content && typeof content === 'string') ? safeMarkdown(content) : '<p style="color:var(--text-tertiary);">暂无输出内容 — 检索源可能暂时不可用</p>'}</div>
                 </div>
             `;
 
