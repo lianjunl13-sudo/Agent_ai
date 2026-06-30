@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>学术论文检索助手</title>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="dark">
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="logo-area">
+          <div class="logo-icon">AI</div>
+          <span class="logo-text">论文检索助手</span>
+        </div>
+        <button class="new-chat-btn" id="new-search-button" type="button">
+          <span>+</span>
+          新检索
+        </button>
+      </div>
+
+      <div class="chat-list" id="history-list"></div>
+
+      <div class="sidebar-footer">
+        <button class="theme-toggle" id="theme-toggle" type="button">
+          <span id="theme-icon">☀</span>
+          <span id="theme-label">浅色模式</span>
+        </button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="chat-header">
+        <button class="sidebar-toggle" id="sidebar-toggle" type="button">☰</button>
+        <div>
+          <div class="chat-header-title" id="page-title">论文检索</div>
+          <div class="service-status" id="connection-status">正在连接服务</div>
+        </div>
+        <div class="header-spacer"></div>
+      </header>
+
+      <div class="content-area" id="content-area">
+        <section id="form-view">
+          <div class="form-card">
+            <div class="form-header">
+              <div class="form-icon">⌕</div>
+              <div>
+                <div class="form-title">开始：论文检索需求</div>
+                <div class="form-subtitle">输入研究主题、年份、任务类型和检索约束</div>
+              </div>
+            </div>
+
+            <form id="search-form">
+              <div class="form-group">
+                <label class="form-label" for="research-topic">
+                  research_topic <span class="required">必填</span>
+                </label>
+                <textarea
+                  id="research-topic"
+                  class="form-textarea"
+                  name="research_topic"
+                  placeholder="请输入研究主题，例如：大语言模型幻觉问题"
+                  required
+                  rows="3"
+                ></textarea>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label" for="task-type">
+                    task_type <span class="required">必填</span>
+                  </label>
+                  <select id="task-type" class="form-select" name="task_type" required>
+                    <option value="快速综述">快速综述</option>
+                    <option value="精读推荐">精读推荐</option>
+                    <option value="Related Work">Related Work</option>
+                    <option value="方法对比">方法对比</option>
+                    <option value="找代码/数据集">找代码/数据集</option>
+                    <option value="复现调研">复现调研</option>
+                    <option value="创新点挖掘">创新点挖掘</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label" for="max-results">
+                    max_results <span class="required">必填</span>
+                  </label>
+                  <input
+                    id="max-results"
+                    type="number"
+                    class="form-input"
+                    name="max_results"
+                    value="5"
+                    min="1"
+                    max="20"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="year-from">
+                  year_from <span class="optional">可选</span>
+                </label>
+                <input
+                  id="year-from"
+                  type="text"
+                  class="form-input"
+                  name="year_from"
+                  placeholder="例如 2022；留空则不限"
+                />
+                <div class="form-hint">留空则不限制起始年份</div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label" for="preferred-sources">
+                    preferred_sources <span class="required">必填</span>
+                  </label>
+                  <select id="preferred-sources" class="form-select" name="preferred_sources" required>
+                    <option value="arXiv only">arXiv only（推荐）</option>
+                    <option value="arXiv + Semantic Scholar">arXiv + Semantic Scholar</option>
+                    <option value="Semantic Scholar only">Semantic Scholar only</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label" for="output-language">
+                    output_language <span class="required">必填</span>
+                  </label>
+                  <select id="output-language" class="form-select" name="output_language" required>
+                    <option value="中文">中文</option>
+                    <option value="English">English</option>
+                    <option value="中英双语">中英双语</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="custom-constraints">
+                  custom_constraints <span class="optional">可选</span>
+                </label>
+                <textarea
+                  id="custom-constraints"
+                  class="form-textarea"
+                  name="custom_constraints"
+                  placeholder="例如：只要顶会 / 必须有代码 / 偏向综述 / 排除医学"
+                  rows="2"
+                ></textarea>
+                <div class="form-hint">添加额外的检索约束条件</div>
+              </div>
+
+              <button type="submit" class="submit-btn" id="submit-button">
+                <span>开始检索</span>
+              </button>
+            </form>
+          </div>
+        </section>
+
+        <section id="progress-view" hidden>
+          <div class="progress-area">
+            <div class="progress-card">
+              <div class="progress-header">
+                <div class="progress-spinner"></div>
+                <span class="progress-title" id="progress-title">正在检索论文...</span>
+              </div>
+              <div class="progress-steps">
+                <div class="progress-step active" data-step="start">
+                  <span class="progress-step-icon"></span>
+                  <span>接收参数 · 论文检索需求</span>
+                </div>
+                <div class="progress-step pending" data-step="retrieve">
+                  <span class="progress-step-icon"></span>
+                  <span>调用 Dify Workflow 检索与筛选</span>
+                </div>
+                <div class="progress-step pending" data-step="synthesize">
+                  <span class="progress-step-icon"></span>
+                  <span>生成 Markdown 综述报告</span>
+                </div>
+              </div>
+              <p id="progress-hint" class="progress-hint"></p>
+            </div>
+          </div>
+        </section>
+
+        <section id="results-view" hidden>
+          <div class="results-area" id="results-container"></div>
+        </section>
+      </div>
+    </main>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
